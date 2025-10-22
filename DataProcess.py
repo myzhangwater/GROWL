@@ -126,7 +126,7 @@ def rolling_robust_z(x, win, min_periods=None):
     return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
-def flag_by_adaptive_z(g, col, flag_col, win=50, min_periods=50, q=0.99):
+def flag_by_adaptive_z(g, col, flag_col, win=100, min_periods=100, q=0.99):
     """
     Anomaly detection based on adaptive thresholds derived from rolling robust Z-scores. Automatic exclusion of missing values."
     """
@@ -655,3 +655,4 @@ def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
     cols_out = ["id", "date", "level_raw", "flag_level", "level", "storage_raw", "flag_storage", "storage"]
 
     return g[cols_out]
+
