@@ -111,29 +111,37 @@ def ensure_regular_time_index(df, date_col, freq, segment_break_d=60, segment_br
 # (3) Adaptive robust Z (Median/MAD) — FLAG_Erroneous
 # ------------------------------------------------------------------------------
 
-def rolling_robust_z(x, win, min_periods):
-    """
-    Robust rolling |z| score using median and MAD against a local baseline.
-    """
+def rolling_robust_z(x, win, min_periods=None):
+
     x = pd.to_numeric(x, errors="coerce")
     med = x.rolling(win, min_periods=min_periods).median()
     mad = (x - med).abs().rolling(win, min_periods=min_periods).median()
+
+    # Use global statistics to handle the null values at the very beginning
+    med.fillna(x.median(), inplace=True)
+    mad.fillna((x - x.median()).abs().median(), inplace=True)
+
     denom = (1.4826 * mad).replace(0, np.nan)
     z = ((x - med) / denom).abs()
-    return z.fillna(0.0)
+    return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
 def flag_by_adaptive_z(g, col, flag_col, win=50, min_periods=50, q=0.99):
     """
-    Flag outliers using robust rolling Z with a data-adaptive threshold.
+    Anomaly detection based on adaptive thresholds derived from rolling robust Z-scores. Automatic exclusion of missing values."
     """
-    zabs = rolling_robust_z(g[col], win, min_periods)
+    valid_mask = g[col].notna()
+    zabs = rolling_robust_z(g.loc[valid_mask, col], win, min_periods)
+
     thr = zabs.quantile(q) * 2
-    bad = zabs > thr
-    g.loc[bad, flag_col] = FLAG_Erroneous
-    g.loc[bad, col] = np.nan
-    g[f"rb_{col}"] = zabs
-    return g, thr
+    bad_mask = zabs > thr
+
+    g.loc[zabs.index[bad_mask], flag_col] = FLAG_Erroneous
+    g.loc[zabs.index[bad_mask], col] = np.nan
+
+    g.loc[zabs.index, f"rb_{col}"] = zabs
+
+    return g,thr
 
 
 # ------------------------------------------------------------------------------
