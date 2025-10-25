@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from collections import deque
-from typing import Tuple, Optional
+from typing import Optional
 
 FLAG_Good = 0           # Good
 FLAG_Erroneous = 1      # Erroneous
@@ -349,7 +349,26 @@ def flag_level_to_storage(df, level_col="level", storage_col="storage", flag_lev
 
 
 # ------------------------------------------------------------------------------
-# (7) Cross-variable completion via monotonic mapping — FLAG_Interpolated
+# (7) Consecutive identical values ——FLAG_Suspect
+# ------------------------------------------------------------------------------
+
+def flag_by_consecutive_equals(g, col, flag_col, min_run=5):
+    s = g[col]
+    valid = s.notna()
+    s_valid = s[valid]
+
+    grp_ids = (s_valid != s_valid.shift()).cumsum()
+    runlen = grp_ids.groupby(grp_ids).transform('size')
+
+    mask_valid = runlen >= min_run
+    idx_flag = s_valid.index[mask_valid]
+
+    g.loc[idx_flag, flag_col] = FLAG_Suspect
+
+    return g
+
+# ------------------------------------------------------------------------------
+# (8) Cross-variable completion via monotonic mapping — FLAG_Interpolated
 # ------------------------------------------------------------------------------
 
 def fill_by_counterpart(df, level_col="level", storage_col="storage", flag_level_col="flag_level",flag_storage_col="flag_storage"):
@@ -422,7 +441,7 @@ def fill_by_counterpart(df, level_col="level", storage_col="storage", flag_level
 
 
 # ------------------------------------------------------------------------------
-# (8) Infer missing level from storage — FLAG_Interpolated
+# (9) Infer missing level from storage — FLAG_Interpolated
 # ------------------------------------------------------------------------------
 
 def fill_level_from_storage(df, storage_col="storage", level_col="level", flag_level_col="flag_level", storage_tol=0.0):
@@ -480,7 +499,7 @@ def fill_level_from_storage(df, storage_col="storage", level_col="level", flag_l
 
 
 # ------------------------------------------------------------------------------
-# (9) Final time interpolation (internal gaps only; optional edges) — FLAG_Interpolated
+# (10) Final time interpolation (internal gaps only; optional edges) — FLAG_Interpolated
 # ------------------------------------------------------------------------------
 
 def final_time_interp(df, date_col="date", val_col="level", flag_col="flag_level", limit=3, fill_edges=False):
@@ -551,10 +570,14 @@ def qc_level_or_storage(df, station_col, date_col, value_col):
     # Robust-Z detection
     g, thr_l = flag_by_adaptive_z(g, var, flag)
     g.loc[g[flag].isin([FLAG_Erroneous, FLAG_Suspect]), var] = np.nan
-    print(thr_l)
+    # print(thr_l)
 
     # Jump detection
     g = big_jump_flag_one_clean(g, val_col=var, flag_col=flag, max_gap_days=max_gap, baseline_k=5)
+    g.loc[g[flag].isin([FLAG_Erroneous, FLAG_Suspect]), var] = np.nan
+
+    # Consecutive identical values
+    g = flag_by_consecutive_equals(g,var, flag)
     g.loc[g[flag].isin([FLAG_Erroneous, FLAG_Suspect]), var] = np.nan
 
     # Regularize time index and interpolate
@@ -628,6 +651,13 @@ def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
     g.loc[g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect]), "level"] = np.nan
     g.loc[g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect]), "storage"] = np.nan
 
+    # Consecutive identical values — FLAG_Suspect
+    g = flag_by_consecutive_equals(g,"level", "flag_level")
+    g = flag_by_consecutive_equals(g,"storage", "flag_storage")
+
+    g.loc[g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect]), "level"] = np.nan
+    g.loc[g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect]), "storage"] = np.nan
+
     # Regularize time index
     g = ensure_regular_time_index(g, "date", frequency)
     g["flag_level"] = g["flag_level"].fillna(FLAG_Good)
@@ -655,4 +685,3 @@ def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
     cols_out = ["id", "date", "level_raw", "flag_level", "level", "storage_raw", "flag_storage", "storage"]
 
     return g[cols_out]
-
