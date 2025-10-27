@@ -27,4 +27,4 @@ Demonstrates time-series quality control and interpolation for water level and s
 ### **Resources**
 
 - **Interactive visualization of the GROWL dataset:** https://ee-zmy18888536368.projects.earthengine.app/view/growl
-- **Download the complete GROWL dataset:** https://figshare.com/s/e993f2563e914ebb9121
+- **Download the complete GROWL dataset:** [https://figshare.com/s/e993f2563e914ebb9121](https://figshare.com/s/2354ff22105599637130)
