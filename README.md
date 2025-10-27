@@ -1,11 +1,11 @@
 # **GROWL Example Code Repository**
 
-This repository provides example scripts for  spatial matching and data processing of the **GROWL (Global Reservoir and Lake Water Level)** dataset. It includes workflows for **spatial association** between hydrological stations and reservoir polygons, as well as procedures for **quality control and flagging protocol** of water level and storage time series.
+This repository provides example scripts for spatial matching and data processing of the **GROWL (Global Reservoir and Lake Water Level)** dataset. It includes workflows for **spatial association** between hydrological stations and reservoir polygons, as well as procedures for **quality control and flagging protocol** of water level and storage time series.
 
 ### **Contents**
 
-#### **1. 39.CSV**
-Sample data provided by the original institution or agency, which has not undergone any preprocessing or cleaning."
+#### **1. 37.CSV**
+Sample data provided by the original institution or agency, which has not undergone any preprocessing or cleaning.
 
 #### **2. HydroPointMatcher.py**
 
