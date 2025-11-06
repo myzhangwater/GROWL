@@ -503,7 +503,7 @@ def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
 
     # Robust rolling Z (per column)
     g,thr_l = flag_by_adaptive_z(g, "level", "flag_level")
-    g,thr_s = flag_by_adaptive_z(g, "storage", "flag_storage",q=0.995, multiplier=5.5)
+    g,thr_s = flag_by_adaptive_z(g, "storage", "flag_storage",multiplier=5.5)
     # print(thr_l,thr_s)
     g.loc[g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect]), "level"] = np.nan
     g.loc[g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect]), "storage"] = np.nan
@@ -549,3 +549,4 @@ def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
     cols_out = ["id", "date", "level_raw", "flag_level", "level", "storage_raw", "flag_storage", "storage"]
 
     return g[cols_out]
+
