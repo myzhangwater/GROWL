@@ -1,30 +1,11 @@
 # **GROWL Example Code Repository**
 
-This repository provides example scripts for spatial matching and data processing of the **GROWL (Global Reservoir and Lake Water Level)** dataset. It includes workflows for **spatial association** between hydrological stations and reservoir polygons, as well as procedures for **quality control and flagging protocol** of water level and storage time series.
+This repository contains example scripts for processing **GROWL (Global Reservoir and Lake Water Level)** dataset, demonstrating key steps in water level and storage time-series quality control. Two examples are included in this repository:
 
-### **Contents**
+- **1. ExampleTrainingData.csv**. Raw sample data directly provided by the original data source, presented in its unprocessed form without any cleaning, filtering, or quality control applied.
+- **2. DataProcess.py**. This script establishes a standardized data-processing framework for conducting systematic quality control and flagging of GROWL water level and storage time-series data. The workflow encompasses timeline regularization and gap segmentation, outlier detection using an adaptive robust Z-score approach, and monotonicity checks to ensure the physical consistency between water level and storage variables. Additionally, the script employs monotonic mapping for cross-variable interpolation and reconstruction, resulting in continuous, internally consistent, and quality-flagged water-level and storage time series.
 
-#### **1. 37.CSV**
-Sample data provided by the original institution or agency, which has not undergone any preprocessing or cleaning.
+**For quick visual exploration and interactive browsing of the GROWL dataset, please visit the link:** https://ee-zmy18888536368.projects.earthengine.app/view/growl
 
-#### **2. HydroPointMatcher.py**
+**For downloading all the GROWL dataset, please visit this link:** https://figshare.com/s/e993f2563e914ebb9121
 
-Demonstrates spatial matching between hydrological stations and reservoir polygons, including:
-
-- Buffer-based and within-polygon matching between points and polygons
-- Calculation of the shortest boundary distance (m) for buffer matches
-
-#### **3. DataProcess.py**
-
-Demonstrates time-series quality control and interpolation for water level and storage datasets, including:
-
-- Timeline regularization and gap segmentation
-- Adaptive robust Z 
-- Jump detection
-- Monotonic consistency between Level & Storage
-- Cross-variable completion via monotonic mapping
-
-### **Resources**
-
-- **Interactive visualization of the GROWL dataset:** https://ee-zmy18888536368.projects.earthengine.app/view/growl
-- **Download the complete GROWL dataset:** [https://figshare.com/s/e993f2563e914ebb9121](https://figshare.com/s/2354ff22105599637130)
