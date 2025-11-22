@@ -1,7 +1,5 @@
 import numpy as np
 import pandas as pd
-from collections import deque
-from typing import Tuple, Optional
 
 FLAG_Good = 0
 FLAG_Erroneous = 1
@@ -14,28 +12,17 @@ FLAG_Interpolated = 3
 # ------------------------------------------------------------------------------
 
 def detect_and_convert(df, date_col="date", monthly_threshold=2):
-    """
-      1) Normalize and sort dates, drop invalid.
-      2) Aggregate duplicate days by mean.
-      3) If any month contains >= monthly_threshold distinct days, treat as daily ("D");
-         otherwise treat as monthly ("M"): snap to month-start and aggregate again.
-    """
     out = df.copy()
     out[date_col] = pd.to_datetime(out[date_col], errors="coerce").dt.normalize()
     out = out.dropna(subset=[date_col]).sort_values(date_col)
-
-    # Aggregate duplicates within the same day by mean
     out = out.groupby(date_col, as_index=False).mean(numeric_only=True)
 
-    # Count distinct days per month
     d = out[date_col]
     counts = d.groupby([d.dt.year, d.dt.month]).nunique()
 
     if (counts >= monthly_threshold).any():
-        # Daily frequency
         freq = "D"
     else:
-        # Monthly frequency: standardize to month-start, aggregate again
         freq = "M"
         out[date_col] = out[date_col].dt.to_period("M").dt.to_timestamp(how="start")
         out = out.groupby(date_col, as_index=False).mean(numeric_only=True)
@@ -45,14 +32,10 @@ def detect_and_convert(df, date_col="date", monthly_threshold=2):
 
 
 # ------------------------------------------------------------------------------
-# Fill regularized time index within contiguous segments (do not span big gaps)
+# Fill regularized time index within contiguous segments
 # ------------------------------------------------------------------------------
 
 def ensure_regular_time_index(df, date_col, freq, segment_break_d=60, segment_break_m=12):
-    """
-    - For freq='D': fill daily; if gap between adjacent dates > 60
-    - For freq='M': fill month-start; if month gap > 12
-    """
     out = df.copy()
     out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
     out = out.dropna(subset=[date_col]).set_index(date_col).sort_index()
@@ -111,12 +94,10 @@ def ensure_regular_time_index(df, date_col, freq, segment_break_d=60, segment_br
 # ------------------------------------------------------------------------------
 
 def rolling_robust_z(x, win, min_periods):
-    
     x = pd.to_numeric(x, errors="coerce")
     med = x.rolling(win, min_periods=min_periods).median()
     mad = (x - med).abs().rolling(win, min_periods=min_periods).median()
 
-    # Use global statistics to handle the null values at the very beginning
     med.fillna(x.median(), inplace=True)
     mad.fillna((x - x.median()).abs().median(), inplace=True)
 
@@ -126,9 +107,6 @@ def rolling_robust_z(x, win, min_periods):
 
 
 def flag_by_adaptive_z(g, col, flag_col, win=90, min_periods=90, q=0.99, multiplier=2):
-    """
-    Anomaly detection based on adaptive thresholds derived from rolling robust Z-scores. Automatic exclusion of missing values."
-    """
     valid_mask = g[col].notna()
     zabs = rolling_robust_z(g.loc[valid_mask, col], win, min_periods)
 
@@ -139,39 +117,36 @@ def flag_by_adaptive_z(g, col, flag_col, win=90, min_periods=90, q=0.99, multipl
     g.loc[zabs.index[bad_mask], col] = np.nan
     g.loc[zabs.index, f"rb_{col}"] = zabs
 
-    return g,thr
+    return g, thr
+
 
 # ------------------------------------------------------------------------------
 # Monotonic consistency between Level & Storage — FLAG_Suspect
 # ------------------------------------------------------------------------------
 
-def flag_storage_to_level(df, level_col="level", storage_col="storage", flag_level_col="flag_level", flag_storage_col="flag_storage"):
-    """
-    Simple monotonic check: sort by storage ascending; level should be non-decreasing.
-    """
+def flag_storage_to_level(df, level_col="level", storage_col="storage", flag_level_col="flag_level",
+                          flag_storage_col="flag_storage"):
     out = df.copy()
     for col in [flag_level_col, flag_storage_col]:
         out[col] = out[col].fillna(0).astype(int)
 
-    # Use rows where both flags are Good
     mask_ok = (out[flag_level_col].eq(0)) & (out[flag_storage_col].eq(0))
     valid = out.loc[mask_ok, [level_col, storage_col]].dropna()
 
     if valid.empty:
         return out
 
-    # Sort by storage
     sorted_vals = valid.sort_values(storage_col).reset_index()
     level_diff = sorted_vals[level_col].diff()
 
     for i in sorted_vals.index:
         if i == 0:
             continue
-        if level_diff[i] < 0:  
+        if level_diff[i] < 0:
             idx_bad = sorted_vals.loc[i, "index"]
-            prev_level = sorted_vals.loc[i-1, level_col]
+            prev_level = sorted_vals.loc[i - 1, level_col]
             cur_level = sorted_vals.loc[i, level_col]
-            prev_storage = sorted_vals.loc[i-1, storage_col]
+            prev_storage = sorted_vals.loc[i - 1, storage_col]
             cur_storage = sorted_vals.loc[i, storage_col]
 
             if abs(cur_storage - prev_storage) < 1.0 and abs(cur_level - prev_level) > 5.0:
@@ -180,14 +155,12 @@ def flag_storage_to_level(df, level_col="level", storage_col="storage", flag_lev
     return out
 
 
-def flag_level_to_storage(df, level_col="level", storage_col="storage", flag_level_col="flag_level", flag_storage_col="flag_storage", abs_tol=0.1, rel_tol=0.002, side_k=5, require_both_sides=True):
-    """
-    In level-ascending order, compare each storage value against the median of its left/right
-    neighborhoods (size = side_k). If deviations exceed: abs_tol + rel_tol * median_side
-    on both sides (or either side if require_both_sides=False), flag storage as suspect.
-    """
+def flag_level_to_storage(df, level_col="level", storage_col="storage", flag_level_col="flag_level",
+                          flag_storage_col="flag_storage", abs_tol=0.1, rel_tol=0.002, side_k=5,
+                          require_both_sides=True):
     g = df.copy()
-    mask_ok = g[level_col].notna() & g[storage_col].notna() & g[flag_storage_col].eq(FLAG_Good) & g[flag_level_col].eq(FLAG_Good)
+    mask_ok = g[level_col].notna() & g[storage_col].notna() & g[flag_storage_col].eq(FLAG_Good) & g[flag_level_col].eq(
+        FLAG_Good)
     if mask_ok.sum() <= 2:
         return g
 
@@ -225,6 +198,7 @@ def flag_level_to_storage(df, level_col="level", storage_col="storage", flag_lev
 
     return g
 
+
 # ------------------------------------------------------------------------------
 # Consecutive identical values ——FLAG_Suspect
 # ------------------------------------------------------------------------------
@@ -245,25 +219,18 @@ def flag_by_consecutive_equals(g, col, flag_col, min_run=5):
 
 
 # ------------------------------------------------------------------------------
-# Cross-variable completion via monotonic mapping — FLAG_Interpolated
+# Cross-variable completion thought monotonic mapping — FLAG_Interpolated
 # ------------------------------------------------------------------------------
 
-def fill_by_counterpart(df, level_col="level", storage_col="storage", flag_level_col="flag_level",flag_storage_col="flag_storage"):
-    """
-    Build empirical monotonic mappings from clean samples (flag=Good for both), and fill one variable using the other.
-    """
+def fill_by_counterpart(df, level_col="level", storage_col="storage", flag_level_col="flag_level",
+                        flag_storage_col="flag_storage"):
     g = df.copy()
-
     clean_both = g[flag_level_col].eq(FLAG_Good) & g[flag_storage_col].eq(FLAG_Good)
 
-    # storage -> level mapping
     base_L = g.loc[clean_both, [level_col, storage_col]].dropna()
     s2l = base_L.groupby(storage_col)[level_col].median().sort_index()
-
-    # level -> storage mapping
     base_S = g.loc[clean_both, [level_col, storage_col]].dropna()
     l2s = base_S.groupby(level_col)[storage_col].median().sort_index()
-
 
     def _round_layers_lookup(val, src, tgt, okmask):
         for rd in (2, 1, 0):
@@ -297,8 +264,7 @@ def fill_by_counterpart(df, level_col="level", storage_col="storage", flag_level
         v = _round_layers_lookup(lv, level_col, storage_col, g[flag_level_col].eq(FLAG_Good))
         return v if pd.notna(v) else _bracket_average(l2s, float(lv))
 
-    # Fill level when storage exists (and is Good)
-    need_L = g[level_col].isna() & g[storage_col].notna()# & g[flag_storage_col].eq(FLAG_Good)
+    need_L = g[level_col].isna() & g[storage_col].notna()  # & g[flag_storage_col].eq(FLAG_Good)
     for i, row in g.loc[need_L].iterrows():
         nv = _find_level_from_storage(row[storage_col])
         if pd.notna(nv):
@@ -306,8 +272,7 @@ def fill_by_counterpart(df, level_col="level", storage_col="storage", flag_level
             if g.at[i, flag_level_col] == FLAG_Good:
                 g.at[i, flag_level_col] = FLAG_Interpolated
 
-    # Fill storage when level exists (and is not Erroneous)
-    need_S = g[storage_col].isna() & g[level_col].notna()# & ~g[flag_level_col].eq(FLAG_Erroneous)
+    need_S = g[storage_col].isna() & g[level_col].notna()  # & ~g[flag_level_col].eq(FLAG_Erroneous)
     for i, row in g.loc[need_S].iterrows():
         nv = _find_storage_from_level(row[level_col])
         if pd.notna(nv):
@@ -322,10 +287,7 @@ def fill_by_counterpart(df, level_col="level", storage_col="storage", flag_level
 # Infer missing level from storage — FLAG_Interpolated
 # ------------------------------------------------------------------------------
 
-def fill_level_from_storage(df, storage_col="storage", level_col="level", flag_level_col="flag_level", storage_tol=0.0 ):
-    """
-    Fill level only when: - current row level is missing AND storage is present.
-    """
+def fill_level_from_storage(df, storage_col="storage", level_col="level", flag_level_col="flag_level", storage_tol=0.0):
     out = df.copy()
     out[flag_level_col] = out[flag_level_col].fillna(FLAG_Good).astype(int)
 
@@ -343,16 +305,15 @@ def fill_level_from_storage(df, storage_col="storage", level_col="level", flag_l
     for idx in out.index[miss_mask]:
         s = float(out.at[idx, storage_col])
 
-        # (1) Same storage (within tolerance)
         exact_hits = np.isclose(ks, s, atol=storage_tol, rtol=0.0) if storage_tol > 0 else (ks == s)
         if np.any(exact_hits):
             vals = kl[exact_hits]
             n = vals.size
-            fill_val = float(vals[0]) if n == 1 else (float((vals[0] + vals[1]) / 2.0) if n == 2 else float(np.median(vals)))
+            fill_val = float(vals[0]) if n == 1 else (
+                float((vals[0] + vals[1]) / 2.0) if n == 2 else float(np.median(vals)))
             out.at[idx, level_col] = fill_val
             continue
 
-        # (2) Neighbor-based fill on storage axis
         pos = np.searchsorted(ks, s, side="left")
         left_ok = (pos - 1) >= 0
         right_ok = pos < ks.size
@@ -376,13 +337,10 @@ def fill_level_from_storage(df, storage_col="storage", level_col="level", flag_l
 
 
 # ------------------------------------------------------------------------------
-# Final time interpolation (internal gaps only; optional edges) — FLAG_Interpolated
+# Final time interpolation — FLAG_Interpolated
 # ------------------------------------------------------------------------------
 
 def final_time_interp(df, date_col="date", val_col="level", flag_col="flag_level", limit=3, fill_edges=False):
-    """
-    Linear interpolation on a regularized time axis.
-    """
     g = df.copy()
     g[date_col] = pd.to_datetime(g[date_col], errors="coerce")
     g = g.dropna(subset=[date_col]).sort_values(date_col).set_index(date_col)
@@ -398,13 +356,11 @@ def final_time_interp(df, date_col="date", val_col="level", flag_col="flag_level
     if val_col in g.columns:
         before = g[val_col].isna()
 
-        # (1) Internal-only interpolation
         g[val_col] = g[val_col].interpolate(method="linear", limit=limit, limit_area="inside")
         filled_inside = before & g[val_col].notna()
         m = filled_inside & ~g[flag_col].isin([FLAG_Erroneous, FLAG_Suspect])
         g.loc[m, flag_col] = FLAG_Interpolated
 
-        # (2) Optional edge-fills
         if fill_edges:
             before_edges = g[val_col].isna()
             g[val_col] = g[val_col].interpolate(method="linear", limit=limit, limit_direction="forward")
@@ -421,10 +377,6 @@ def final_time_interp(df, date_col="date", val_col="level", flag_col="flag_level
 # ===========================================
 
 def qc_level_or_storage(df, station_col, date_col, value_col):
-    """
-    Quality control and imputation for a single variable (level or storage).
-    """
-
     name = value_col.lower()
     if "level" in name:
         var, flag, raw = "level", "flag_level", "level_raw"
@@ -444,25 +396,22 @@ def qc_level_or_storage(df, station_col, date_col, value_col):
 
     frequency, g = detect_and_convert(g, "date")
     max_gap = 60 if str(frequency).upper().startswith('D') else 12
+    win = 90 if str(frequency).upper().startswith('D') else 36
 
-    # Robust-Z detection
     if "Level" in value_col:
-        g,thr = flag_by_adaptive_z(g, "level", "flag_level")
+        g, thr = flag_by_adaptive_z(g, "level", "flag_level", win=win, min_periods=win)
     else:
-        g,thr = flag_by_adaptive_z(g, "storage", "flag_storage", multiplier=5.5)
-       
+        g, thr = flag_by_adaptive_z(g, "storage", "flag_storage", win=win, min_periods=win, multiplier=5.5)
+
     g.loc[g[flag].isin([FLAG_Erroneous, FLAG_Suspect]), var] = np.nan
-    
-    # Consecutive identical values
-    g = flag_by_consecutive_equals(g,var, flag)
+
+    g = flag_by_consecutive_equals(g, var, flag)
     g.loc[g[flag].isin([FLAG_Erroneous, FLAG_Suspect]), var] = np.nan
-    
-    # Regularize time index and interpolate
+
     g = ensure_regular_time_index(g, "date", frequency)
     g[flag] = g[flag].fillna(FLAG_Interpolated)
     g = final_time_interp(g, val_col=var, flag_col=flag, limit=max_gap)
 
-    # Mark rows that were filled
     g.loc[g[raw].isna() & g[var].notna(), flag] = FLAG_Interpolated
     g = g.dropna(subset=[var], how="all")
 
@@ -476,10 +425,6 @@ def qc_level_or_storage(df, station_col, date_col, value_col):
 # ===========================================
 
 def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
-    """
-    Joint QC & imputation for level and storage time series of the same station.
-    """
-
     rename_cols = {station_col: "id", date_col: "date", level_col: "level", storage_col: "storage"}
     g = df.rename(columns=rename_cols).copy()[["id", "date", "level", "storage"]]
     id_val = g['id'].unique().item()
@@ -497,51 +442,44 @@ def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
     g.loc[g["level_raw"] == 0, "flag_level"] = FLAG_Erroneous
     g.loc[g["level_raw"] == 0, "flag_storage"] = FLAG_Erroneous
 
-    # Frequency detection
     frequency, g = detect_and_convert(g, "date")
     max_gap = 60 if str(frequency).upper().startswith('D') else 12
+    win = 90 if str(frequency).upper().startswith('D') else 36
 
-    # Robust rolling Z (per column)
-    g,thr_l = flag_by_adaptive_z(g, "level", "flag_level")
-    g,thr_s = flag_by_adaptive_z(g, "storage", "flag_storage",multiplier=5.5)
+    g, thr_l = flag_by_adaptive_z(g, "level", "flag_level", win=win, min_periods=win)
+    g, thr_s = flag_by_adaptive_z(g, "storage", "flag_storage", win=win, min_periods=win, multiplier=5.5)
     # print(thr_l,thr_s)
     g.loc[g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect]), "level"] = np.nan
     g.loc[g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect]), "storage"] = np.nan
 
-    # Monotonic relation anomalies — FLAG_Suspect
-    g = flag_storage_to_level(g, level_col="level", storage_col="storage", flag_level_col="flag_level", flag_storage_col="flag_storage")
-    # g = flag_level_to_storage(g,level_col="level", storage_col="storage", flag_level_col="flag_level", flag_storage_col="flag_storage")
+    g = flag_storage_to_level(g, level_col="level", storage_col="storage", flag_level_col="flag_level",
+                              flag_storage_col="flag_storage")
 
     g.loc[g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect]), "level"] = np.nan
     g.loc[g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect]), "storage"] = np.nan
 
-    # Consecutive identical values — FLAG_Suspect
-    g = flag_by_consecutive_equals(g,"level", "flag_level")
-    g = flag_by_consecutive_equals(g,"storage", "flag_storage")
+    g = flag_by_consecutive_equals(g, "level", "flag_level")
+    g = flag_by_consecutive_equals(g, "storage", "flag_storage")
 
     g.loc[g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect]), "level"] = np.nan
     g.loc[g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect]), "storage"] = np.nan
 
-    # Regularize time index
     g = ensure_regular_time_index(g, "date", frequency)
-    g["flag_level"]   = g["flag_level"].fillna(FLAG_Good)
+    g["flag_level"] = g["flag_level"].fillna(FLAG_Good)
     g["flag_storage"] = g["flag_storage"].fillna(FLAG_Good)
 
-    # Cross-fill via monotonic mapping (only when both flags were Good)
     g = fill_by_counterpart(g)
 
-    # Prefer filling level from storage when possible (mapping-aware)
-    g = fill_level_from_storage(g, storage_col="storage", level_col="level", flag_level_col="flag_level", storage_tol=1e-6)
+    g = fill_level_from_storage(g, storage_col="storage", level_col="level", flag_level_col="flag_level",
+                                storage_tol=1e-6)
 
-    # Time interpolation for remaining gaps, then cross-fill again
     g = final_time_interp(g, val_col="level", flag_col="flag_level", limit=max_gap)
     g = fill_by_counterpart(g)
 
-    # Mark rows that were filled
-    mL = g["level_raw"].isna()   & g["level"].notna()    & ~g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect])
+    mL = g["level_raw"].isna() & g["level"].notna() & ~g["flag_level"].isin([FLAG_Erroneous, FLAG_Suspect])
     g.loc[mL, "flag_level"] = FLAG_Interpolated
 
-    mS = g["storage_raw"].isna() & g["storage"].notna()  & ~g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect])
+    mS = g["storage_raw"].isna() & g["storage"].notna() & ~g["flag_storage"].isin([FLAG_Erroneous, FLAG_Suspect])
     g.loc[mS, "flag_storage"] = FLAG_Interpolated
 
     g = g.dropna(subset=["level", "storage"], how="all")
@@ -549,4 +487,3 @@ def qc_level_and_storage(df, station_col, date_col, level_col, storage_col):
     cols_out = ["id", "date", "level_raw", "flag_level", "level", "storage_raw", "flag_storage", "storage"]
 
     return g[cols_out]
-
